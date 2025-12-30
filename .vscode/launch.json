@@ -1,0 +1,16 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Process Video",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "cwd": "${workspaceFolder}",
+            // Path to your Python interpreter
+            "python": "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3"
+        }
+    ]
+}
