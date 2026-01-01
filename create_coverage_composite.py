@@ -15,12 +15,16 @@ import sys
 import re
 
 
-def load_ignored_wells(videos_dir: Path):
+def load_ignored_wells(videos_dir: Path, max_wells=None):
     """
     Load ignore_these_wells.csv from videos_dir.
     Expected columns: video, ignored_wells
     ignored_wells can be a list separated by commas, semicolons, pipes or spaces (e.g. "1,2,3" or "1;2;3").
     Returns dict: { video_stem: set([1,2,3]) }
+
+    Args:
+        videos_dir: Path to videos directory
+        max_wells: Maximum well number to accept (None = no limit)
     """
     ignored = {}
     csv_path = videos_dir / "ignore_these_wells.csv"
@@ -41,7 +45,7 @@ def load_ignored_wells(videos_dir: Path):
             for t in tokens:
                 if t.isdigit():
                     n = int(t)
-                    if 1 <= n <= 6:
+                    if n >= 1 and (max_wells is None or n <= max_wells):
                         nums.add(n)
             if nums:
                 ignored[video_stem] = nums
@@ -51,6 +55,7 @@ def load_ignored_wells(videos_dir: Path):
 def load_coverage_data(csv_path: Path, sort_by='coverage', ignored_wells_map=None):
     """
     Load coverage data from CSV and return sorted list of (video, well_num, coverage, center_coverage) tuples.
+    Automatically detects the number of wells from CSV column headers.
 
     Args:
         csv_path: Path to the CSV file
@@ -64,6 +69,23 @@ def load_coverage_data(csv_path: Path, sort_by='coverage', ignored_wells_map=Non
 
     with open(csv_path, 'r', newline='') as f:
         reader = csv.DictReader(f)
+
+        # Detect number of wells from column headers
+        # Look for columns like "well1_coverage", "well2_coverage", etc.
+        headers = reader.fieldnames or []
+        well_numbers = set()
+        for header in headers:
+            match = re.match(r'well(\d+)_coverage', header)
+            if match:
+                well_numbers.add(int(match.group(1)))
+
+        if not well_numbers:
+            print("Warning: No well coverage columns found in CSV")
+            return wells_data
+
+        max_well = max(well_numbers)
+        print(f"Detected {len(well_numbers)} wells (well numbers: {sorted(well_numbers)})")
+
         for row in reader:
             video_name = row.get('video') or row.get('filename') or row.get('file')
             if not video_name:
@@ -71,8 +93,8 @@ def load_coverage_data(csv_path: Path, sort_by='coverage', ignored_wells_map=Non
             # Remove extension from video name for matching with folder names
             video_stem = Path(video_name).stem
 
-            # Extract coverage for each well
-            for well_num in range(1, 7):
+            # Extract coverage for each detected well
+            for well_num in sorted(well_numbers):
                 # Skip if this well is listed in ignore_these_wells.csv
                 if video_stem in ignored_wells_map and well_num in ignored_wells_map[video_stem]:
                     continue
@@ -194,10 +216,8 @@ def main():
     frames_dir = base / "results"
     videos_dir = base / "videos"
 
-    # Load ignore list (if present)
-    ignored_wells_map = load_ignored_wells(videos_dir)
-    if ignored_wells_map:
-        print(f"Loaded ignore_errors entries for {len(ignored_wells_map)} video(s)")
+    # Load ignore list (if present) - will be called again after detecting well count
+    ignored_wells_map = {}
 
     # Check for command line argument
     sort_by = 'coverage'
@@ -217,7 +237,17 @@ def main():
         return
 
     print(f"Loading coverage data from CSV (sorting by {sort_by})...")
-    wells_data = load_coverage_data(csv_path, sort_by=sort_by, ignored_wells_map=ignored_wells_map)
+    # First pass: detect wells and load data
+    wells_data = load_coverage_data(csv_path, sort_by=sort_by, ignored_wells_map={})
+
+    # Now load ignored wells with proper max_wells limit
+    if wells_data:
+        max_well_num = max(well_num for _, well_num, _, _ in wells_data)
+        ignored_wells_map = load_ignored_wells(videos_dir, max_wells=max_well_num)
+        if ignored_wells_map:
+            print(f"Loaded ignore_these_wells entries for {len(ignored_wells_map)} video(s)")
+            # Reload data with ignored wells applied
+            wells_data = load_coverage_data(csv_path, sort_by=sort_by, ignored_wells_map=ignored_wells_map)
 
     if not wells_data:
         print("No well data found in CSV (all wells may be ignored or CSV entries missing)")

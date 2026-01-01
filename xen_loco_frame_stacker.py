@@ -4,7 +4,8 @@ import sys
 import numpy as np
 import csv
 import re
-from typing import Set, Optional
+import argparse
+from typing import Set, Optional, List, Tuple
 
 VIDEO_EXTS = {'.mp4', '.avi', '.mov', '.mkv', '.MP4', '.AVI', '.MOV', '.MKV'}
 
@@ -35,38 +36,58 @@ def calculate_center_weighted_coverage(crop_bw):
     return weighted_coverage / total_possible_weight
 
 
+def load_wells_from_csv(csv_path: Path) -> Tuple[List[Tuple[str, int, int, int, int, int, int, int]], dict]:
+    """
+    Load well definitions from CSV file.
+    Expected columns: well_name, center_x, center_y, radius, total_pixels
+    Returns: (wells_list, total_pixels_dict)
+    - wells_list: List of tuples (name, center_x, center_y, radius, x1, y1, x2, y2) - 8 elements
+    - total_pixels_dict: Dict mapping well_name to total_pixels count
+    """
+    wells = []
+    total_pixels_dict = {}
+
+    with open(csv_path, 'r', newline='') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            name = row['well_name']
+            center_x = int(row['center_x'])
+            center_y = int(row['center_y'])
+            radius = int(row['radius'])
+
+            # Get total_pixels (required column)
+            total_pixels = int(row['total_pixels'])
+            total_pixels_dict[name] = total_pixels
+
+            # Calculate bounding box from circular well
+            x1 = center_x - radius
+            y1 = center_y - radius
+            x2 = center_x + radius
+            y2 = center_y + radius
+
+            # Store: name, center_x, center_y, radius, x1, y1, x2, y2
+            wells.append((name, center_x, center_y, radius, x1, y1, x2, y2))
+
+    return wells, total_pixels_dict
+
+
 def get_well_coverages_from_final_frame(frame, final_bw_frame, out_dir: Path, prefix: str,
+                                        wells_data: List[Tuple[str, int, int, int, int, int, int, int]],
+                                        total_pixels_dict: dict,
                                         ignored_wells: Optional[Set[int]] = None):
     """
     Returns two lists, one for coverage and one for center_coverage.
-    Each list contains exactly 6 entries corresponding to wells 1..6.
+    Each list contains entries corresponding to each well.
     Ignored wells will have the string 'ignored_error' as their entry and
     will not have cropped images written out.
+
+    wells_data: List of tuples (name, center_x, center_y, radius, x1, y1, x2, y2) defining well locations
+    total_pixels_dict: Dict mapping well_name to total_pixels count
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     h, w = frame.shape[:2]
 
-    # Hardcoded well locations by centre
-    w1 = (196, 197)
-    w2 = (373, 197)
-    w3 = (550, 197)
-    w4 = (196, 372)
-    w5 = (373, 372)
-    w6 = (550, 372)
-
-    # Hardcoded well sizes
-    sx = int(178 / 2)  # well width half
-    sy = int(178 / 2)  # well height half
-
-    # Build well list as (name, x1, y1, x2, y2)
-    wells = [
-        ("well1", w1[0] - sx, w1[1] - sy, w1[0] + sx, w1[1] + sy),
-        ("well2", w2[0] - sx, w2[1] - sy, w2[0] + sx, w2[1] + sy),
-        ("well3", w3[0] - sx, w3[1] - sy, w3[0] + sx, w3[1] + sy),
-        ("well4", w4[0] - sx, w4[1] - sy, w4[0] + sx, w4[1] + sy),
-        ("well5", w5[0] - sx, w5[1] - sy, w5[0] + sx, w5[1] + sy),
-        ("well6", w6[0] - sx, w6[1] - sy, w6[0] + sx, w6[1] + sy)
-    ]
+    wells = wells_data
 
     # Output full frames
     out_file = out_dir / f"{prefix}-allwells-colour.png"
@@ -83,7 +104,7 @@ def get_well_coverages_from_final_frame(frame, final_bw_frame, out_dir: Path, pr
     if ignored_wells is None:
         ignored_wells = set()
 
-    for idx, (name, x1, y1, x2, y2) in enumerate(wells, start=1):
+    for idx, (name, center_x, center_y, radius, x1, y1, x2, y2) in enumerate(wells, start=1):
         # If this well is marked ignored, append special value and skip writing crops
         if idx in ignored_wells:
             print(f"Skipping {name} for {prefix}: marked ignored")
@@ -106,46 +127,60 @@ def get_well_coverages_from_final_frame(frame, final_bw_frame, out_dir: Path, pr
         crop = frame[y1c:y2c, x1c:x2c]
         crop_bw = final_bw_frame[y1c:y2c, x1c:x2c]
 
+        # Create circular mask for the well
+        crop_h, crop_w = crop_bw.shape[:2]
+        mask = np.zeros((crop_h, crop_w), dtype=np.uint8)
+
+        # Calculate center position in cropped coordinates
+        crop_center_x = center_x - x1c
+        crop_center_y = center_y - y1c
+
+        # Draw filled circle on mask
+        cv2.circle(mask, (crop_center_x, crop_center_y), radius, 255, -1)
+
+        # Apply mask to crops
+        crop_masked = cv2.bitwise_and(crop, crop, mask=mask)
+        crop_bw_masked = cv2.bitwise_and(crop_bw, crop_bw, mask=mask)
+
+        # For greyscale output, set areas outside circle to white (255)
+        crop_bw_output = crop_bw_masked.copy()
+        crop_bw_output[mask == 0] = 255
+
         # Write out cropped images
         out_file = out_dir / f"{prefix}-{name}-colour.png"
-        cv2.imwrite(str(out_file), crop)
+        cv2.imwrite(str(out_file), crop_masked)
 
         out_file = out_dir / f"{prefix}-{name}-greyscale.png"
-        cv2.imwrite(str(out_file), crop_bw)
+        cv2.imwrite(str(out_file), crop_bw_output)
 
-        # Ensure single-channel for coverage calculations
-        if crop_bw.ndim == 3:
-            crop_bw_gray = cv2.cvtColor(crop_bw, cv2.COLOR_BGR2GRAY)
+        # Ensure single-channel for coverage calculations (use masked version, not output)
+        if crop_bw_masked.ndim == 3:
+            crop_bw_gray = cv2.cvtColor(crop_bw_masked, cv2.COLOR_BGR2GRAY)
         else:
-            crop_bw_gray = crop_bw
+            crop_bw_gray = crop_bw_masked
 
-        # Calculate the total black pixels and coverage
-        total_pixels = crop_bw_gray.shape[0] * crop_bw_gray.shape[1]
-        black_pixels = np.sum(crop_bw_gray == 0)
-        frame_coverage_ratio = black_pixels / total_pixels if total_pixels > 0 else 0.0
+        # Calculate the total black pixels and coverage (only within circular mask)
+        black_pixels = np.sum((crop_bw_gray == 0) & (mask == 255))
 
-        # highest_coverage_ratio expected to be set globally
-        try:
-            well_coverage = (frame_coverage_ratio / highest_coverage_ratio) * 100.0
-        except Exception:
-            well_coverage = 0.0
+        # Get total possible pixels from CSV
+        total_pixels = total_pixels_dict.get(name, mask.sum() // 255)
 
-        center_weighted_ratio = calculate_center_weighted_coverage(crop_bw_gray)
-        try:
-            well_center_coverage = (center_weighted_ratio / highest_center_coverage_ratio) * 100.0
-        except Exception:
-            well_center_coverage = 0.0
+        # Calculate coverage percentage
+        well_coverage = (black_pixels / total_pixels) * 100.0 if total_pixels > 0 else 0.0
+
+        # Calculate center-weighted coverage (only on masked region)
+        # Apply mask to ensure we only calculate on circular region
+        masked_crop = crop_bw_gray.copy()
+        masked_crop[mask == 0] = 255  # Set non-circle pixels to white
+
+        center_weighted_ratio = calculate_center_weighted_coverage(masked_crop)
+        # Scale by total_pixels for percentage
+        well_center_coverage = center_weighted_ratio * 100.0
 
         well_coverages.append(well_coverage)
         well_center_coverages.append(well_center_coverage)
 
         print(f"  {name} coverage: {well_coverage:.2f}%, center_coverage: {well_center_coverage:.2f}%")
-
-    # Ensure lists are length 6
-    while len(well_coverages) < 6:
-        well_coverages.append("ignored_well")
-    while len(well_center_coverages) < 6:
-        well_center_coverages.append("ignored_well")
 
     return well_coverages, well_center_coverages
 
@@ -166,7 +201,8 @@ def calculate_well_full_coverage_percentage(full_coverage_image_path: Path):
     return coverage_ratio, center_weighted_ratio
 
 
-def split_and_stack_frames(video_path: Path, out_dir: Path, ignored_wells: Optional[Set[int]] = None):
+def split_and_stack_frames(video_path: Path, out_dir: Path, wells_data: List[Tuple[str, int, int, int, int, int, int, int]],
+                          total_pixels_dict: dict, ignored_wells: Optional[Set[int]] = None):
     out_dir.mkdir(parents=True, exist_ok=True)
     cap = cv2.VideoCapture(str(video_path))
 
@@ -241,7 +277,7 @@ def split_and_stack_frames(video_path: Path, out_dir: Path, ignored_wells: Optio
 
     cap.release()
 
-    return get_well_coverages_from_final_frame(added_frame, final_bw_frame, out_dir, video_path.stem, ignored_wells)
+    return get_well_coverages_from_final_frame(added_frame, final_bw_frame, out_dir, video_path.stem, wells_data, total_pixels_dict, ignored_wells)
 
 
 def load_ignored_wells(videos_dir: Path):
@@ -296,6 +332,11 @@ def _well_is_ignored(video_stem: str, well_num: int, csv_row: Optional[dict], ig
 
 
 def main():
+    parser = argparse.ArgumentParser(description='Process tadpole locomotion videos and analyze well coverage.')
+    parser.add_argument('--wells-file', type=str, default='6_wells.csv',
+                       help='Path to CSV file containing well definitions (default: 6_wells.csv)')
+    args = parser.parse_args()
+
     base = Path(__file__).parent
     videos_dir = base / "videos"
 
@@ -303,23 +344,35 @@ def main():
         print(f"No 'videos' folder found at {videos_dir}", file=sys.stderr)
         return
 
+    # Load wells configuration
+    wells_file = Path(args.wells_file)
+    if not wells_file.is_absolute():
+        wells_file = base / wells_file
+
+    if not wells_file.exists():
+        print(f"Wells file not found: {wells_file}", file=sys.stderr)
+        return
+
+    print(f"Loading well definitions from: {wells_file}")
+    wells_data, total_pixels_dict = load_wells_from_csv(wells_file)
+    print(f"Loaded {len(wells_data)} wells")
+    if total_pixels_dict:
+        print(f"Loaded total_pixels for {len(total_pixels_dict)} wells")
+
     results_root = base / "results"
     results_root.mkdir(exist_ok=True)
 
     found = False
 
-    global highest_coverage_ratio, highest_center_coverage_ratio
-    highest_coverage_ratio, highest_center_coverage_ratio = calculate_well_full_coverage_percentage(Path("well_full_coverage.png"))
-    # fallback to 1.0 to avoid division by zero if load failed
-    if not highest_coverage_ratio or highest_coverage_ratio == 0:
-        highest_coverage_ratio = 1.0
-    if not highest_center_coverage_ratio or highest_center_coverage_ratio == 0:
-        highest_center_coverage_ratio = 1.0
+    # No longer need global coverage ratios - using per-well total_pixels from CSV
 
     ignored_wells_map = load_ignored_wells(videos_dir)
 
-    header = ("video,well1_coverage,well2_coverage,well3_coverage,well4_coverage,well5_coverage,well6_coverage,"
-              "well1_center_coverage,well2_center_coverage,well3_center_coverage,well4_center_coverage,well5_center_coverage,well6_center_coverage\n")
+    # Generate dynamic CSV header based on number of wells
+    num_wells = len(wells_data)
+    coverage_headers = [f"{wells_data[i][0]}_coverage" for i in range(num_wells)]
+    center_coverage_headers = [f"{wells_data[i][0]}_center_coverage" for i in range(num_wells)]
+    header = "video," + ",".join(coverage_headers) + "," + ",".join(center_coverage_headers) + "\n"
 
     with open(results_root / "results.csv", "w", buffering=1) as results_file:
         results_file.write(header)
@@ -333,12 +386,12 @@ def main():
             print(f"Processing {path.name} -> {out_dir}")
 
             ignored_for_video = ignored_wells_map.get(path.stem, set())
-            well_coverages, well_center_coverages = split_and_stack_frames(path, out_dir, ignored_for_video)
+            well_coverages, well_center_coverages = split_and_stack_frames(path, out_dir, wells_data, total_pixels_dict, ignored_for_video)
 
-            # Ensure we always have 6 entries; if function returned None, mark all ignored_well
+            # If function returned None, mark all wells as ignored
             if not well_coverages or not well_center_coverages:
-                well_coverages = ["ignored_well"] * 6
-                well_center_coverages = ["ignored_well"] * 6
+                well_coverages = ["ignored_well"] * num_wells
+                well_center_coverages = ["ignored_well"] * num_wells
 
             # Format entries: numeric -> formatted string, string -> pass through
             def fmt_list(lst):
@@ -348,8 +401,6 @@ def main():
                         out.append(f"{v:.2f}")
                     else:
                         out.append(str(v))
-                # pad/truncate to 6
-                out = out[:6] + ["ignored_well"] * max(0, 6 - len(out))
                 return out
 
             coverage_list = fmt_list(well_coverages)

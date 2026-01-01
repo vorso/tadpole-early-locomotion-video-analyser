@@ -10,7 +10,11 @@
             "justMyCode": true,
             "cwd": "${workspaceFolder}",
             // Path to your Python interpreter
-            "python": "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3"
+            "python": "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3",
+            "args": [
+                "--wells-file",
+                "8_wells.csv"
+            ]
         }
     ]
 }
