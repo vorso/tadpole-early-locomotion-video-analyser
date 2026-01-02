@@ -196,7 +196,8 @@ def create_composite_image(wells_data, frames_dir: Path, output_path: Path, sort
 
         # Line 2: Well number and coverage
         if sort_by == 'center_coverage':
-            info_text = f"Well {well_num}: C{center_coverage:.1f}%"
+            # center_coverage is a score (not a percentage) — format with 'CC score '
+            info_text = f"Well {well_num}: CC score {center_coverage:.1f}"
         else:
             info_text = f"Well {well_num}: {coverage:.1f}%"
         cv2.putText(canvas, info_text, (text_x, text_y + 15),
@@ -229,7 +230,11 @@ def main():
             print("Usage: python create_coverage_composite.py [coverage|center_coverage]")
             return
 
-    output_filename = f"coverage_composite_{sort_by}.png"
+    # For the default coverage sort, use the clearer filename requested by users
+    if sort_by == 'coverage':
+        output_filename = "percentage_total_coverage_composite.png"
+    else:
+        output_filename = f"coverage_composite_{sort_by}.png"
     output_path = base / "results" / output_filename
 
     if not csv_path.exists():
@@ -255,7 +260,8 @@ def main():
 
     print(f"Found {len(wells_data)} wells")
     if sort_by == 'center_coverage':
-        print(f"Center coverage range: {wells_data[0][3]:.1f}% to {wells_data[-1][3]:.1f}%")
+        # center_coverage is a score (not a percentage) — show range without '%'
+        print(f"Center coverage range (CC score): {wells_data[0][3]:.1f} to {wells_data[-1][3]:.1f}")
     else:
         print(f"Coverage range: {wells_data[0][2]:.1f}% to {wells_data[-1][2]:.1f}%")
 
@@ -263,6 +269,21 @@ def main():
     create_composite_image(wells_data, frames_dir, output_path, sort_by=sort_by, cols=10)
 
     print("\nDone!")
+
+    # Additionally create a composite ordered by center_coverage for the same set of wells
+    try:
+        print(f"\nCreating composite image sorted by center_coverage...")
+        center_output_filename = "center_coverage_score_composite.png"
+        center_output_path = base / "results" / center_output_filename
+
+        # Reload wells_data sorted by center_coverage with same ignored_wells_map
+        center_wells_data = load_coverage_data(csv_path, sort_by='center_coverage', ignored_wells_map=ignored_wells_map)
+        if center_wells_data:
+            create_composite_image(center_wells_data, frames_dir, center_output_path, sort_by='center_coverage', cols=10)
+        else:
+            print("No well data found for center_coverage composite (all wells may be ignored or CSV entries missing)")
+    except Exception as e:
+        print(f"Failed to create center_coverage composite: {e}")
 
 
 if __name__ == "__main__":
