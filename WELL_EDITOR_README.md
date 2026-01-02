@@ -13,7 +13,7 @@ The Well Editor is an interactive GUI tool for creating and editing well configu
 - **Resize Wells**: Drag corner handles to resize individual wells
 - **Batch Operations**: Scale all wells simultaneously or snap them to the same size
 - **Add/Remove Wells**: Dynamically add or remove wells as needed
-- **CSV Import/Export**: Load existing configurations and save your changes
+- **CSV Import/Export**: Load existing configurations (e.g. 6_wells.csv and 8_wells.csv) and save your changes
 
 ## Installation
 
@@ -28,25 +28,28 @@ The well editor requires the same dependencies as the main analysis script:
 
 ```bash
 # Auto-detect wells from video (recommended for new configurations)
-python3 well_editor.py path/to/video.mp4
+python3 well_editor_circular.py path/to/video.mp4
 
-# Edit an existing well configuration
-python3 well_editor.py path/to/video.mp4 --wells-csv 6_wells.csv
+# Edit an existing 6-well configuration
+python3 well_editor_circular.py path/to/video.mp4 --wells-csv 6_wells.csv
+
+# Edit an existing 8-well configuration
+python3 well_editor_circular.py path/to/video.mp4 --wells-csv 8_wells.csv
 ```
 
 **Note**: When no CSV file is specified, the editor automatically detects circular wells from the first frame of the video. This works best for videos with light grey circles on a darker background.
 
-### Examples
+### Examples 
 
 ```bash
-# Auto-detect wells from video (NEW!)
-python3 well_editor.py videos/Xen_loco-20241114T114530-f30.avi
+# Auto-detect wells from video
+python3 well_editor_circular.py videos/Xen_loco-20241114T114530-f30.avi
 
 # Load and edit existing 6-well configuration
-python3 well_editor.py videos/Xen_loco-20241114T114530-f30.avi --wells-csv 6_wells.csv
+python3 well_editor_circular.py videos/Xen_loco-20241114T114530-f30.avi --wells-csv 6_wells.csv
 
-# Create a custom 4-well configuration
-python3 well_editor.py videos/Xen_loco-20241114T114530-f30.avi --wells-csv 4_wells.csv
+# Create a custom well configuration with the filename "4_wells.csv"
+python3 well_editor_circular.py videos/Xen_loco-20241114T114530-f30.avi --wells-csv 4_wells.csv
 ```
 
 ## Automatic Well Detection
@@ -107,14 +110,14 @@ If auto-detection fails or produces incorrect results, you can:
 ## Workflow
 
 ### For New Videos (with Auto-Detection):
-1. **Load video** without CSV: `python3 well_editor.py video.avi`
+1. **Load video** without CSV: `python3 well_editor_circular.py video.avi`
 2. **Review auto-detected wells** - they should cover all circular regions
-3. **Adjust if needed** - drag to reposition, resize corners, or add/remove wells
+3. **Adjust if needed** - drag to reposition, resize circles, or add/remove wells
 4. **Verify** by playing through the video or scrubbing frames
 5. **Save** your configuration with the W key
 
 ### For Existing Configurations:
-1. **Load video with CSV**: `python3 well_editor.py video.avi --wells-csv wells.csv`
+1. **Load video with CSV**: `python3 well_editor_circular.py video.avi --wells-csv 6_wells.csv`
 2. **Navigate** to a representative frame using the trackbar or play the video
 3. **Adjust wells** by dragging them to the correct locations
 4. **Resize wells** by dragging the corner handles
